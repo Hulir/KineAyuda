@@ -5,7 +5,7 @@ from transbank.common.options import WebpayOptions
 # Credenciales SANDBOX oficiales de Webpay Plus (solo integración)
 # Fuente: Transbank Developers (Referencia API Webpay)
 COMMERCE_CODE = "597055555532"
-API_KEY_SECRET = "579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C"
+API_KEY_SECRET = ""
 
 # Configuración para ambiente de pruebas (TEST)
 options = WebpayOptions(
