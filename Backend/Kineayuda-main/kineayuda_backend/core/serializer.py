@@ -1,0 +1,299 @@
+from rest_framework import serializers
+from .models import kinesiologo, paciente, cita, reseña, agenda, metodoPago, pagoSuscripcion, documentoVerificacion
+from django.utils import timezone
+from .modulo_ia import analizar_sentimiento
+from .utils.rut import normalizar_rut, formatear_rut
+from django.db import transaction
+
+class kinesiologoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = kinesiologo
+        fields = '__all__'
+
+    def validate_estado_verificacion(self, value):
+        if value not in dict(kinesiologo.ESTADO_VERIFICACION):
+            raise serializers.ValidationError("Estado de verificación inválido.")
+        return value
+    
+    def validate_rut(self, value):
+        try:
+            return normalizar_rut(value)
+        except ValueError as e:
+            raise serializers.ValidationError(str(e))
+    
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        try:
+            data['rut'] = formatear_rut(data['rut'])
+        except Exception:
+            pass
+        return data
+
+class pacienteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = paciente
+        fields = '__all__'
+    
+    def validate_nombre(self, value):
+        if not value:
+            raise serializers.ValidationError("El nombre del paciente es obligatorio.")
+        return value
+    
+    def validate_apellido(self, value):
+        if not value:
+            raise serializers.ValidationError("El apellido del paciente es obligatorio.")
+        return value
+    
+    def validate_rut(self, value):
+        try:
+            return normalizar_rut(value)
+        except ValueError as e:
+            raise serializers.ValidationError(str(e))
+    
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        try:
+            data['rut'] = formatear_rut(data['rut'])
+        except Exception:
+            pass
+        return data
+
+class citaSerializer(serializers.ModelSerializer):
+    paciente_detalle = pacienteSerializer(source='paciente', read_only=True)
+
+    class Meta:
+        model = cita
+        fields = ['id', 'paciente', 'paciente_detalle', 'kinesiologo', 'fecha_hora', 'estado', 'nota', 'estado_pago', 'fecha_creacion']
+    
+    def validate_fecha_hora(self, value):
+        if value < timezone.now():
+            raise serializers.ValidationError("Fecha de cita inválida.")
+        return value
+
+    def validate_estado(self, value):
+        if value not in dict(cita.ESTADO_CITA):
+            raise serializers.ValidationError("Estado de cita inválido.")
+        return value
+    
+    def validate(self, data):
+        paciente = data.get('paciente') or getattr(self.instance, 'paciente', None)
+        kinesiologo = data.get('kinesiologo') or getattr(self.instance, 'kinesiologo', None)
+        if not paciente:
+            raise serializers.ValidationError("Se debe asignar un paciente válido.")
+        if not kinesiologo:
+            raise serializers.ValidationError("Se debe asignar un kinesiólogo válido")
+        return data
+
+class reseñaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = reseña
+        fields = '__all__'
+    
+    def validate(self, data):
+        cita = data.get('cita')
+        if cita.estado != 'completada':
+            raise serializers.ValidationError("No se puede crear una reseña para una cita que no está completada.")
+        
+        #Verificar que no exista una reseña para la misma cita
+        if reseña.objects.filter(cita=cita).exists():
+            raise serializers.ValidationError("Ya existe una reseña para esta cita.")
+        
+        return data
+    
+    def create(self, validated_data): #se sobreescribe el método create para agregar el análisis de sentimiento
+        # Analizar el sentimiento del texto de la reseña utilizando el módulo de IA
+        texto = validated_data.get('comentario')
+        sentimiento = analizar_sentimiento(texto) #devuelve 'positiva', 'neutral' o 'negativa'
+        validated_data['sentimiento'] = sentimiento
+        return super().create(validated_data)
+
+class ReseñaPublicaSerializer(serializers.Serializer):
+    rut = serializers.CharField(max_length=15)
+    comentario = serializers.CharField()
+    calificacion = serializers.IntegerField(min_value=1, max_value=5, default=5)
+
+    def validate(self, data):
+        rut_raw = data.get("rut")
+        cita_obj = self.context.get("cita")
+
+        if not cita_obj:
+            raise serializers.ValidationError({"cita": "Cita no encontrada en el contexto."})
+
+        try:
+            rut_norm = normalizar_rut(rut_raw)
+        except Exception as e:
+            raise serializers.ValidationError({"rut": f"RUT inválido: {str(e)}"})
+
+        # Verificar que el paciente exista y que la cita sea suya
+        try:
+            pac = paciente.objects.get(rut=rut_norm)
+        except paciente.DoesNotExist:
+            raise serializers.ValidationError({"rut": "No existe un paciente con este RUT."})
+
+        if cita_obj.paciente_id != pac.id:
+            raise serializers.ValidationError({"cita": "Esta cita no pertenece a este paciente."})
+
+        # Validar estado de la cita
+        if cita_obj.estado != "completada":
+            raise serializers.ValidationError({"cita": "Solo puedes reseñar citas COMPLETADAS."})
+
+        # Verificar que no exista reseña previa
+        if reseña.objects.filter(cita=cita_obj).exists():
+            raise serializers.ValidationError({"cita": "Ya existe una reseña para esta cita."})
+
+        # Guardamos objetos útiles
+        data["paciente_obj"] = pac
+        data["cita_obj"] = cita_obj
+        return data
+
+    def create(self, validated_data):
+        cita_obj = validated_data["cita_obj"]
+        comentario = validated_data["comentario"]
+        calificacion = validated_data.get("calificacion", 5)
+
+        sentimiento = analizar_sentimiento(comentario)  # 'positiva', 'neutral' o 'negativa'
+
+        nueva_reseña = reseña.objects.create(
+            cita=cita_obj,
+            comentario=comentario,
+            sentimiento=sentimiento,
+            calificacion=calificacion,
+        )
+        return nueva_reseña
+    
+class agendaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = agenda
+        fields = '__all__'
+        read_only_fields = ['estado', 'paciente', 'cita', 'kinesiologo', 'fecha_creacion']
+    
+    def validate(self, data):
+        inicio = data.get('inicio')
+        fin = data.get('fin')
+        if not inicio or not fin:
+            raise serializers.ValidationError("Se deben proporcionar tanto la hora de inicio como la de fin.")
+        
+        if inicio >= fin:
+            raise serializers.ValidationError("La hora de inicio debe ser anterior a la hora de fin.")
+        
+        if inicio < timezone.now():
+            raise serializers.ValidationError("La hora de inicio no puede ser en el pasado.")
+        
+        return data
+
+class metodoPagoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = metodoPago
+        fields = '__all__'
+
+
+class kinesiologoFotoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = kinesiologo
+        fields = ['id','foto_perfil']
+    
+    def validate_foto_perfil(self, file):
+        if not file:
+            return file
+        if file.size > 5 * 1024 * 1024:  # 5 MB limit
+            raise serializers.ValidationError("El tamaño de la imagen no debe exceder los 5 MB.")
+        valid_types = ['image/jpeg', 'image/png', 'image/webp']
+        if hasattr(file, 'content_type') and file.content_type not in valid_types:
+            raise serializers.ValidationError("Tipo de archivo no soportado. Use JPEG, PNG o WEBP.")
+        return file
+
+class documentoVerificacionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = documentoVerificacion
+        fields = '__all__'
+        read_only_fields = ['kinesiologo', 'fecha_subida', 'estado', 'comentario_revisor']
+
+        def validate_archivo(self, file):
+            if file.size > 10 * 1024 * 1024:
+                raise serializers.ValidationError("El tamaño del archivo no debe exceder los 10 MB.")
+            valid_types = ['image/jpeg', 'image/png', 'application/pdf', 'image/webp']
+            if hasattr(file, 'content_type') and file.content_type not in valid_types:
+                raise serializers.ValidationError("Tipo de archivo no soportado. Use JPEG, PNG, WEBP o PDF.")
+            return file
+
+class KinesiologoRegistroSerializer(serializers.Serializer):
+    nombre = serializers.CharField(max_length=100)
+    apellido = serializers.CharField(max_length=100)
+    nro_titulo = serializers.CharField(max_length=100)
+    rut = serializers.CharField(max_length=12)
+    doc_verificacion = serializers.CharField(max_length=50, required = False, allow_blank = True)
+    especialidad = serializers.CharField(max_length = 50)
+    
+    #Campos de los documentos de verificación
+    doc_id_frente = serializers.FileField(write_only=True, required=True)
+    doc_id_reverso = serializers.FileField(write_only=True, required=True)
+    doc_titulo = serializers.FileField(write_only=True, required=True)
+    doc_certificado = serializers.ListField(child=serializers.FileField(),write_only=True, required=False, allow_empty=True)
+
+    def validate_rut(self, value):
+        try:
+            return normalizar_rut(value)
+        except ValueError as e:
+            raise serializers.ValidationError(str(e))
+    
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        try:
+            data['rut'] = formatear_rut(data['rut'])
+        except Exception:
+            pass
+        return data
+    
+    @transaction.atomic
+    def create(self, validated_data):
+        #Crea el kinesiologo en estado pendiente y los documentos de verificación asociados
+        request = self.context['request']
+        user = getattr(request, 'user', None)
+        uid = getattr(user, 'uid', None)
+        email = getattr(user, 'email', None)
+
+        if not uid or not email:
+            # Fallback: Intentar obtener UID y Email del request.data (FormData)
+            # Esto permite el registro incluso si la validación estricta del token falla
+            uid = request.data.get('uid')
+            email = request.data.get('email')
+            
+            if not uid or not email:
+                raise serializers.ValidationError("Usuario no autenticado correctamente y faltan datos de respaldo.")
+        
+        #pop a los datos de documentos de verificacion, que no pertenecen al modelo kinesiologo
+        doc_id_frente = validated_data.pop('doc_id_frente')
+        doc_id_reverso = validated_data.pop('doc_id_reverso')
+        doc_titulo = validated_data.pop('doc_titulo')
+        doc_certificados = validated_data.pop('doc_certificado', [])
+
+        #Se crea el kinesiologo
+        kx = kinesiologo.objects.create(
+            nombre=validated_data['nombre'],
+            apellido=validated_data['apellido'],
+            email=email,
+            firebase_ide=uid,
+            nro_titulo=validated_data['nro_titulo'],
+            rut=validated_data['rut'],
+            doc_verificacion=validated_data.get('doc_verificacion', ''),
+            especialidad=validated_data['especialidad'],
+            estado_verificacion='pendiente'
+        )
+
+        #Crear los documentos de verificación asociados
+        documentoVerificacion.objects.create(kinesiologo=kx, tipo='ID_FRENTE', archivo=doc_id_frente, estado='pendiente')
+        documentoVerificacion.objects.create(kinesiologo=kx, tipo='ID_REVERSO', archivo=doc_id_reverso, estado='pendiente')
+        documentoVerificacion.objects.create(kinesiologo=kx, tipo='TITULO', archivo=doc_titulo, estado='pendiente')
+        for cert in doc_certificados:
+            documentoVerificacion.objects.create(kinesiologo=kx, tipo='CERTIFICADO', archivo=cert, estado='pendiente')
+        return kx
+
+class CitaPublicaSerializer(serializers.ModelSerializer):
+    kinesiologo_nombre = serializers.SerializerMethodField()
+
+    class Meta:
+        model = cita
+        fields = ['id', 'kinesiologo_nombre', 'fecha_hora', 'estado', 'nota']
+
+    def get_kinesiologo_nombre(self, obj):
+        return f"{obj.kinesiologo.nombre} {obj.kinesiologo.apellido}"

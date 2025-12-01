@@ -1,0 +1,38 @@
+# ============================================
+# CONFIGURACIÓN DE EMAIL PARA .ENV
+# ============================================
+# Copia estas líneas y agrégalas al archivo .env en producción
+
+# Email Configuration (Gmail)
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=True
+EMAIL_HOST_USER=kineayudachile@gmail.com
+EMAIL_HOST_PASSWORD=vxkpexnczssuvmhbt
+DEFAULT_FROM_EMAIL=noreply@kineayuda.org
+
+# ============================================
+# INSTRUCCIONES:
+# ============================================
+# 1. Abre el archivo .env ubicado en:
+#    Backend/Kineayuda-main/.env
+#
+# 2. Agrega las líneas de arriba (líneas 6-12) al FINAL del archivo
+#
+# 3. Guarda el archivo
+#
+# 4. Reinicia el backend:
+#    docker-compose restart backend
+#
+# 5. Prueba aprobando un kinesiólogo desde el admin:
+#    - Ve a /admin
+#    - Cambia un kinesiólogo a estado "aprobado"
+#    - El correo se enviará automáticamente a su email
+#
+# ============================================
+# VERIFICACIÓN:
+# ============================================
+# - Los correos se enviarán desde: kineayudachile@gmail.com
+# - Límite: 500 correos por día (gratis)
+# - Los correos se mostrarán como enviados desde: noreply@kineayuda.org
