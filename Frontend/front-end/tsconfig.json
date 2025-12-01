@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" }
+  ],
+  "compilerOptions": {
+    // 🔥 Asegura que los tipos de React estén disponibles globalmente
+    "types": ["react", "react-dom"]
+  }
+}

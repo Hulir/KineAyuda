@@ -1,0 +1,20 @@
+// src/rutas/Routes.ts
+export const rutas = {
+  inicio: "/",
+  contacto: "/contacto",
+  nosotros: "/nosotros",
+  especialidades: "/especialidades",
+  especialidadDetalle: "/especialidades/:id",
+  reserva: "/reserva-cita",
+  consultarCita: "/consultar-cita/:codigo?",
+  kinesiologo: "/kinesiologo",
+  registroKine: "/kinesiologo/registro",
+  loginKine: "/kinesiologo/login",
+  suscripcion: "/suscripcion",
+  verificacionPendiente: "/kinesiologo/verificacion-pendiente",
+  panelKine: "/panel-kine",
+  pagoExitoso: "/pago-exitoso",
+  admin: "/admin",
+  adminDashboard: "/admin/dashboard",
+  adminVerificaciones: "/admin/verificaciones",
+};

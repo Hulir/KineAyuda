@@ -1,0 +1,130 @@
+// src/paginas/kinesiologos/dashboard/DashboardLayout.tsx
+import { useState, useEffect } from "react";
+import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import { getAuth, signOut } from "firebase/auth";
+import {
+    LogOut,
+    Calendar,
+    User,
+    Star,
+    ClipboardList,
+    Settings,
+    Menu,
+    X,
+
+    // Cerrar sesión
+    const handleLogout = async () => {
+        try {
+            await signOut(auth);
+        } finally {
+            localStorage.clear();
+            navigate("/loginKine");
+        }
+    };
+
+// Enlaces laterales del panel
+const enlaces = [
+    { nombre: "Inicio", ruta: "/panel-kine", icono: <ClipboardList size={18} /> },
+    { nombre: "Mi Perfil", ruta: "/panel-kine/perfil", icono: <User size={18} /> },
+    { nombre: "Agenda", ruta: "/panel-kine/agenda", icono: <Calendar size={18} /> },
+    { nombre: "Citas", ruta: "/panel-kine/citas", icono: <ClipboardList size={18} /> },
+    { nombre: "Reseñas", ruta: "/panel-kine/resenas", icono: <Star size={18} /> },
+    {
+        nombre: "Suscripción",
+        ruta: "/panel-kine/suscripcion",
+        icono: <Settings size={18} />,
+    },
+];
+
+return (
+    <div
+        className="flex min-h-screen transition-colors duration-300"
+        style={{ backgroundColor: colorFondo }}
+    >
+        {/* Sidebar */}
+        <aside
+            className={`${menuAbierto ? "translate-x-0" : "-translate-x-full"
+                } md:translate-x-0 fixed md:static inset-y-0 left-0 w-64 bg-indigo-900 text-white z-50 transform transition-transform duration-300`}
+        >
+            {/* Logo */}
+            <div className="flex flex-col items-center justify-center p-6 border-b border-indigo-700">
+                <img
+                    src="/src/assets/img/logo.png"
+                    alt="KineAyuda"
+                    className="h-36 w-36 object-contain drop-shadow-md"
+                />
+                <h1 className="mt-2 text-lg font-bold">KineAyuda</h1>
+                <p className="text-xs text-indigo-200">Panel del kinesiólogo</p>
+            </div>
+
+            {/* Links */}
+            <nav className="flex flex-col gap-1 p-4">
+                {enlaces.map((item) => (
+                    <NavLink
+                        key={item.ruta}
+                        to={item.ruta}
+                        end={item.ruta === "/panel-kine"} // solo el inicio usa `end`
+                        className={({ isActive }) =>
+                            `flex items-center gap-2 p-2 rounded-lg text-sm transition ${isActive
+                                ? "bg-indigo-700 text-white"
+                                : "text-indigo-200 hover:bg-indigo-800"
+                            }`
+                        }
+                        onClick={() => setMenuAbierto(false)}
+                    >
+                        {item.icono}
+                        <span>{item.nombre}</span>
+                    </NavLink>
+                ))}
+            </nav>
+
+            {/* Logout */}
+            <div className="mt-auto p-4 border-t border-indigo-700">
+                <button
+                    onClick={() => setMostrarModalLogout(true)}
+                    className="flex items-center gap-2 text-sm text-indigo-300 hover:text-white transition"
+                >
+                    <LogOut size={18} /> Cerrar sesión
+                </button>
+            </div>
+        </aside>
+
+        {/* Contenido principal */}
+        <div className="flex-1 flex flex-col">
+            {/* Header superior */}
+            <header className="flex items-center justify-between bg-white shadow px-4 md:px-8 py-4 sticky top-0 z-10 border-b border-gray-200">
+                <div className="flex items-center gap-4">
+                    {/* Botón menú móvil */}
+                    <button
+                        className="md:hidden p-2 rounded-md border border-gray-200"
+                        onClick={() => setMenuAbierto((prev) => !prev)}
+                    >
+                        {menuAbierto ? <X size={20} /> : <Menu size={20} />}
+                    </button>
+
+                    <h2 className="text-2xl md:text-3xl font-extrabold bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-400 bg-clip-text text-transparent">
+                        Panel del Kinesiólogo
+                    </h2>
+                </div>
+
+                <div className="flex items-center gap-3">
+                    <label className="text-sm font-medium text-gray-600 hidden sm:block">
+                        Fondo:
+                    </label>
+                    <input
+                        type="color"
+                        value={colorFondo}
+                        onChange={(e) => setColorFondo(e.target.value)}
+                        className="w-8 h-8 border rounded cursor-pointer"
+                    />
+                </div>
+            </header>
+
+            {/* Vista dinámica según la ruta */}
+            <main className="flex-1 p-4 md:p-6 overflow-y-auto">
+                <Outlet />
+            </main>
+        </div>
+    </div>
+);
+}

@@ -1,0 +1,580 @@
+// src/paginas/kinesiologos/dashboard/Agenda.tsx
+import { useState, useEffect, useMemo } from "react";
+import { Calendar, dateFnsLocalizer } from "react-big-calendar";
+import type { SlotInfo } from "react-big-calendar";
+import { format, parse, startOfWeek, getDay, addDays } from "date-fns";
+import { es } from "date-fns/locale";
+import "react-big-calendar/lib/css/react-big-calendar.css";
+import { obtenerAgendaKine, crearBloqueAgenda, eliminarBloqueAgenda } from "../../../services/agendaService";
+import api from "../../../services/api";
+
+interface BloqueAgendaBackend {
+    id: number;
+    inicio: string;
+    fin: string;
+    estado: "disponible" | "reservado" | "no_disponible" | "expirado" | string;
+    cita?: {
+        id: number;
+        estado: "pendiente" | "completada" | "cancelada";
+    };
+}
+
+interface EventoAgenda {
+    id: number;
+    title: string;
+    start: Date;
+    end: Date;
+    estado: "disponible" | "reservado" | "completada" | "cancelada" | "expirado";
+    citaId?: number;
+}
+
+const locales = { es };
+const localizer = dateFnsLocalizer({
+    format,
+    parse,
+    startOfWeek: (date: Date) => startOfWeek(date, { weekStartsOn: 1 }),
+    getDay,
+    locales,
+});
+
+type View = 'month' | 'week' | 'day' | 'agenda';
+
+const Agenda = () => {
+    const [eventos, setEventos] = useState<EventoAgenda[]>([]);
+    const [view, setView] = useState<View>("week");
+    const [date, setDate] = useState(new Date());
+    const [cargando, setCargando] = useState(false);
+    const [fechaInicioSub, setFechaInicioSub] = useState<Date>(new Date());
+    const [fechaFinSub, setFechaFinSub] = useState<Date>(addDays(new Date(), 30));
+    const [horaInicio, setHoraInicio] = useState("09:00");
+    const [horaFin, setHoraFin] = useState("22:00");
+    const [mostrarModal, setMostrarModal] = useState(false);
+    const [duracionMinutos, setDuracionMinutos] = useState(60);
+    const [mostrarModalManual, setMostrarModalManual] = useState(false);
+    const [slotManual, setSlotManual] = useState<{ start: Date; end: Date } | null>(null);
+
+    const obtenerPeriodoSuscripcion = async () => {
+        try {
+            const response = await api.get('/pagos/estado/');
+            const data = response.data;
+            if (data.activa && data.vence) {
+                const fechaFin = new Date(data.vence);
+                const fechaInicio = new Date(fechaFin);
+                fechaInicio.setMonth(fechaInicio.getMonth() - 1);
+                setFechaInicioSub(fechaInicio);
+                setFechaFinSub(fechaFin);
+                return;
+            }
+            const hoy = new Date();
+            const fin = addDays(hoy, 30);
+            setFechaInicioSub(hoy);
+            setFechaFinSub(fin);
+        } catch (error) {
+            console.error("Error obteniendo período de suscripción:", error);
+            const hoy = new Date();
+            const fin = addDays(hoy, 30);
+            setFechaInicioSub(hoy);
+            setFechaFinSub(fin);
+        }
+    };
+
+    const cargarAgenda = async () => {
+        setCargando(true);
+        try {
+            const data: BloqueAgendaBackend[] = await obtenerAgendaKine();
+            const mapeados: EventoAgenda[] = data.map((slot) => {
+                let estado: EventoAgenda["estado"] = "disponible";
+
+                // Determinar estado basado en la cita
+                if (slot.cita) {
+                    if (slot.cita.estado === "completada") {
+                        estado = "completada";
+                    } else if (slot.cita.estado === "cancelada") {
+                        estado = "cancelada";
+                    } else {
+                        estado = "reservado";
+                    }
+                } else if (slot.estado === "expirado") {
+                    estado = "expirado";
+                } else if (slot.estado === "disponible") {
+                    estado = "disponible";
+                }
+
+                // Título solo estado (calendario muestra hora)
+                const estadoTexto = estado === "disponible" ? "Disponible" :
+                    estado === "reservado" ? "Reservada" :
+                        estado === "completada" ? "Completada" :
+                            estado === "cancelada" ? "Cancelada" : "No disponible";
+
+                return {
+                    id: slot.id,
+                    title: estadoTexto,
+                    start: new Date(slot.inicio),
+                    end: new Date(slot.fin),
+                    estado,
+                    citaId: slot.cita?.id,
+                };
+            });
+            setEventos(mapeados);
+        } catch (error) {
+            console.error("Error al cargar agenda:", error);
+            alert("No se pudo cargar la agenda.");
+        } finally {
+            setCargando(false);
+        }
+    };
+
+    useEffect(() => {
+        obtenerPeriodoSuscripcion();
+        cargarAgenda();
+
+    }, []);
+
+    const moverFecha = (direccion: "prev" | "next") => {
+        const factor = direccion === "prev" ? -1 : 1;
+        const nueva = new Date(date);
+        if (view === "day") {
+            nueva.setDate(nueva.getDate() + factor);
+        } else if (view === "week") {
+            nueva.setDate(nueva.getDate() + factor * 7);
+        } else if (view === "month") {
+            nueva.setMonth(nueva.getMonth() + factor);
+        }
+        setDate(nueva);
+    };
+
+    const irHoy = () => setDate(new Date());
+
+    const tituloCalendario = useMemo(() => {
+        if (view === "day") {
+            return format(date, "d 'de' MMMM yyyy", { locale: es });
+        }
+        if (view === "month") {
+            return format(date, "MMMM yyyy", { locale: es });
+        }
+        const inicioSemana = startOfWeek(date, { weekStartsOn: 1 });
+        const finSemana = addDays(inicioSemana, 6);
+        const inicioTxt = format(inicioSemana, "d 'de' MMMM", { locale: es });
+        const finTxt = format(finSemana, "d 'de' MMMM", { locale: es });
+        return `${inicioTxt} – ${finTxt}`;
+    }, [date, view]);
+
+    const guardarHorario = async () => {
+        if (!horaInicio || !horaFin) {
+            alert("Por favor define hora de inicio y fin.");
+            return;
+        }
+        const [hIni, mIni] = horaInicio.split(":").map(Number);
+        const [hFin, mFin] = horaFin.split(":").map(Number);
+        if (hIni > hFin || (hIni === hFin && mIni >= mFin)) {
+            alert("La hora de inicio debe ser menor a la hora de fin.");
+            return;
+        }
+        try {
+            const inicioRango = new Date(fechaInicioSub);
+            const finRango = new Date(fechaFinSub);
+            const agendaActual: BloqueAgendaBackend[] = await obtenerAgendaKine();
+            const aEliminar = agendaActual.filter((slot) => {
+                if (slot.estado !== "disponible") return false;
+                const ini = new Date(slot.inicio);
+                return ini >= inicioRango && ini <= finRango;
+            });
+            if (aEliminar.length > 0) {
+                await Promise.all(aEliminar.map((slot) => eliminarBloqueAgenda(slot.id)));
+            }
+            const nuevosEventos: EventoAgenda[] = [];
+            const peticiones: Promise<any>[] = [];
+            const d = new Date(inicioRango);
+            while (d <= finRango) {
+                let slotInicio = new Date(d);
+                slotInicio.setHours(hIni, mIni, 0, 0);
+                const limiteDia = new Date(d);
+                limiteDia.setHours(hFin, mFin, 0, 0);
+                while (true) {
+                    const slotFin = new Date(slotInicio.getTime() + duracionMinutos * 60000);
+                    if (slotFin > limiteDia) break;
+                    const prom = crearBloqueAgenda({
+                        inicio: slotInicio.toISOString(),
+                        fin: slotFin.toISOString(),
+                    }).then((creado: BloqueAgendaBackend) => {
+                        nuevosEventos.push({
+                            id: creado.id,
+                            title: "",
+                            start: new Date(creado.inicio),
+                            end: new Date(creado.fin),
+                            estado: "disponible",
+                        });
+                    });
+                    peticiones.push(prom);
+                    slotInicio = slotFin;
+                }
+                d.setDate(d.getDate() + 1);
+            }
+            await Promise.all(peticiones);
+            setEventos((prev) => {
+                const filtrados = prev.filter((ev) => {
+                    if (ev.estado !== "disponible") return true;
+                    return ev.start < inicioRango || ev.start > finRango;
+                });
+                return [...filtrados, ...nuevosEventos];
+            });
+            setMostrarModal(false);
+            alert("Horario configurado exitosamente.");
+        } catch (error: any) {
+            console.error("Error al guardar horario:", error.response?.data || error);
+            alert("No se pudo guardar el horario.");
+        }
+    };
+
+    const manejarClickEvento = async (event: EventoAgenda) => {
+        if (event.estado === "reservado" || event.estado === "completada") {
+            window.location.href = "/panel-kine/citas";
+            return;
+        }
+        if (event.estado === "disponible") {
+            if (window.confirm("¿Deseas eliminar este bloque de disponibilidad?")) {
+                try {
+                    await eliminarBloqueAgenda(event.id);
+                    setEventos((prev) => prev.filter((e) => e.id !== event.id));
+                } catch (error) {
+                    console.error("Error eliminando bloque:", error);
+                    alert("No se pudo eliminar el bloque.");
+                }
+            }
+        }
+    };
+
+    const manejarSelectSlot = (slotInfo: SlotInfo) => {
+        const start = slotInfo.start;
+        const end = new Date(start.getTime() + 60 * 60000);
+        if (start < new Date()) {
+            alert("No puedes crear disponibilidad en el pasado.");
+            return;
+        }
+        setSlotManual({ start, end });
+        setMostrarModalManual(true);
+    };
+
+    const cambiarDuracionManual = (minutos: number) => {
+        if (!slotManual) return;
+        const newEnd = new Date(slotManual.start.getTime() + minutos * 60000);
+        setSlotManual({ ...slotManual, end: newEnd });
+    };
+
+    const guardarBloqueManual = async () => {
+        if (!slotManual) return;
+        try {
+            const creado: BloqueAgendaBackend = await crearBloqueAgenda({
+                inicio: slotManual.start.toISOString(),
+                fin: slotManual.end.toISOString(),
+            });
+            setEventos((prev) => [
+                ...prev,
+                {
+                    id: creado.id,
+                    title: "",
+                    start: new Date(creado.inicio),
+                    end: new Date(creado.fin),
+                    estado: "disponible",
+                },
+            ]);
+            setMostrarModalManual(false);
+            setSlotManual(null);
+        } catch (error: any) {
+            console.error("Error creando bloque manual:", error);
+            alert("No se pudo crear el bloque.");
+        }
+    };
+
+    // Sistema de colores por estado + tooltips (PASTEL + texto oscuro)
+    const eventPropGetter = (event: EventoAgenda) => {
+        const colores: Record<EventoAgenda["estado"], { bg: string; border: string; cursor: string; title: string; textColor: string }> = {
+            disponible: {
+                bg: "#f3f4f6", // gray-100 pastel
+                border: "1px solid #d1d5db",
+                cursor: "pointer",
+                title: "Disponible",
+                textColor: "#1f2937", // gray-800 oscuro
+            },
+            reservado: {
+                bg: "#dbeafe", // blue-100 pastel
+                border: "1px solid #93c5fd",
+                cursor: "pointer",
+                title: "Cita reservada",
+                textColor: "#1e40af", // blue-800 oscuro
+            },
+            completada: {
+                bg: "#dcfce7", // green-100 pastel
+                border: "1px solid #86efac",
+                cursor: "pointer",
+                title: "Completada",
+                textColor: "#166534", // green-800 oscuro
+            },
+            cancelada: {
+                bg: "#f3f4f6", // gray-100 pastel (disponible nuevamente)
+                border: "1px solid #d1d5db",
+                cursor: "default",
+                title: "Disponible",
+                textColor: "#1f2937", // gray-800 oscuro
+            },
+            expirado: {
+                bg: "#fecaca", // red-200 pastel
+                border: "1px solid #fca5a5",
+                cursor: "default",
+                title: "No disponible",
+                textColor: "#991b1b", // red-800 oscuro
+            },
+        };
+
+        const estilo = colores[event.estado] || colores.disponible;
+
+        return {
+            style: {
+                backgroundColor: estilo.bg,
+                borderRadius: "4px",
+                border: estilo.border,
+                color: estilo.textColor,
+                fontSize: "0.75rem",
+                fontWeight: "600",
+                cursor: estilo.cursor,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                textAlign: "center",
+                padding: "2px",
+                whiteSpace: "pre-line",
+            },
+        };
+    };
+
+    const minHora = (() => {
+        const d = new Date();
+        d.setHours(7, 0, 0, 0);
+        return d;
+    })();
+
+    const maxHora = (() => {
+        const d = new Date();
+        d.setHours(23, 0, 0, 0);
+        return d;
+    })();
+
+    return (
+        <div className="p-6 bg-slate-50 min-h-screen">
+            <div className="flex flex-col md:flex-row items-center justify-between gap-4 mb-6">
+                <div className="flex items-center gap-2 bg-white p-1 rounded-lg shadow-sm border border-slate-200">
+                    <button
+                        className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
+                        onClick={() => moverFecha("prev")}
+                    >
+                        ← Ant.
+                    </button>
+                    <button
+                        className="px-4 py-1.5 bg-indigo-50 text-indigo-700 font-medium rounded-md hover:bg-indigo-100 transition-colors"
+                        onClick={irHoy}
+                    >
+                        Hoy
+                    </button>
+                    <button
+                        className="px-3 py-1.5 text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
+                        onClick={() => moverFecha("next")}
+                    >
+                        Sig. →
+                    </button>
+                </div>
+
+                <div className="flex flex-wrap gap-2 md:ml-auto">
+                    <div className="flex bg-white p-1 rounded-lg shadow-sm border border-slate-200 mr-2">
+                        <button
+                            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view === "month" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
+                            onClick={() => setView("month")}
+                        >
+                            Mes
+                        </button>
+                        <button
+                            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view === "week" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
+                            onClick={() => setView("week")}
+                        >
+                            Semana
+                        </button>
+                        <button
+                            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view === "day" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}
+                            onClick={() => setView("day")}
+                        >
+                            Día
+                        </button>
+                    </div>
+                    <button
+                        className="px-4 py-2 rounded-lg bg-indigo-600 text-white font-medium shadow-sm hover:bg-indigo-700 hover:shadow transition-all flex items-center gap-2"
+                        onClick={() => setMostrarModal(true)}
+                    >
+                        <span>⚙️</span> Configurar Horario
+                    </button>
+                </div>
+            </div>
+
+            <h2 className="text-center mb-6 text-xl font-bold text-slate-800 capitalize">
+                {tituloCalendario}
+            </h2>
+
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                {cargando ? (
+                    <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+                        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-indigo-600 mb-4"></div>
+                        <p>Cargando tu agenda...</p>
+                    </div>
+                ) : (
+                    <Calendar
+                        {...({
+                            localizer,
+                            date,
+                            view,
+                            events: eventos,
+                            startAccessor: "start",
+                            endAccessor: "end",
+                            onNavigate: (d: Date) => setDate(d),
+                            onView: (v: View) => setView(v),
+                            culture: "es",
+                            style: { height: "70vh" },
+                            components: { toolbar: () => null },
+                            min: minHora,
+                            max: maxHora,
+                            step: 30,
+                            timeslots: 2,
+                            selectable: true,
+                            onSelectSlot: manejarSelectSlot,
+                            onSelectEvent: manejarClickEvento,
+                            eventPropGetter: eventPropGetter,
+                            className: "font-sans"
+                        } as any)}
+                    />
+                )}
+            </div>
+
+            {/* Modal configuración horario */}
+            {mostrarModal && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+                    <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-lg">
+                        <div className="flex justify-between items-start mb-6">
+                            <div>
+                                <h3 className="text-2xl font-bold text-slate-800">Configurar Disponibilidad</h3>
+                                <p className="text-sm text-slate-500 mt-1">Define tus bloques de atención automática.</p>
+                            </div>
+                            <button onClick={() => setMostrarModal(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+                        </div>
+
+                        <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 mb-6">
+                            <p className="text-xs text-indigo-800">
+                                ⚠️ <strong>Atención:</strong> Esta acción <strong>borrará</strong> los bloques disponibles actuales.<br />
+                                <span className="font-mono mt-1 block text-indigo-900 font-bold">
+                                    {format(fechaInicioSub, "dd/MM/yyyy")} — {format(fechaFinSub, "dd/MM/yyyy")}
+                                </span>
+                            </p>
+                        </div>
+
+                        <div className="space-y-5">
+                            <div className="grid grid-cols-2 gap-5">
+                                <div>
+                                    <label className="block mb-2 text-sm font-semibold text-slate-700">Hora Inicio</label>
+                                    <input
+                                        type="time"
+                                        value={horaInicio}
+                                        onChange={(e) => setHoraInicio(e.target.value)}
+                                        className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block mb-2 text-sm font-semibold text-slate-700">Hora Término</label>
+                                    <input
+                                        type="time"
+                                        value={horaFin}
+                                        onChange={(e) => setHoraFin(e.target.value)}
+                                        className="w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block mb-2 text-sm font-semibold text-slate-700">Duración de la sesión</label>
+                                <div className="grid grid-cols-4 gap-2">
+                                    {[30, 45, 60, 90].map((min) => (
+                                        <button
+                                            key={min}
+                                            onClick={() => setDuracionMinutos(min)}
+                                            className={`py-2 px-1 rounded-lg text-sm font-medium border transition-all ${duracionMinutos === min
+                                                ? "bg-indigo-600 text-white border-indigo-600"
+                                                : "bg-white text-slate-600 border-slate-200 hover:border-indigo-300"}`}
+                                        >
+                                            {min} min
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-end gap-3 mt-8 pt-6 border-t border-slate-100">
+                            <button
+                                className="px-5 py-2.5 text-slate-600 font-medium hover:bg-slate-50 rounded-xl"
+                                onClick={() => setMostrarModal(false)}
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                className="px-5 py-2.5 bg-indigo-600 text-white font-medium rounded-xl hover:bg-indigo-700"
+                                onClick={guardarHorario}
+                            >
+                                Guardar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal bloque manual */}
+            {mostrarModalManual && slotManual && (
+                <div className="fixed inset-0 bg-black/60 flex justify-center items-center z-50 p-4">
+                    <div className="bg-white p-6 rounded-xl shadow-2xl w-full max-w-md">
+                        <h3 className="text-xl font-bold mb-4">Crear Disponibilidad Manual</h3>
+                        <p className="text-sm text-slate-600 mb-4">
+                            Inicio: {format(slotManual.start, "PPp", { locale: es })}<br />
+                            Fin: {format(slotManual.end, "PPp", { locale: es })}
+                        </p>
+                        <div className="mb-4">
+                            <label className="block mb-2 text-sm font-semibold">Duración</label>
+                            <div className="grid grid-cols-4 gap-2">
+                                {[30, 45, 60, 90].map((min) => (
+                                    <button
+                                        key={min}
+                                        onClick={() => cambiarDuracionManual(min)}
+                                        className="py-2 rounded-lg text-sm border border-slate-200 hover:border-indigo-500"
+                                    >
+                                        {min} min
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-3">
+                            <button
+                                className="px-4 py-2 text-slate-600 hover:bg-slate-50 rounded-lg"
+                                onClick={() => {
+                                    setMostrarModalManual(false);
+                                    setSlotManual(null);
+                                }}
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                                onClick={guardarBloqueManual}
+                            >
+                                Crear
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default Agenda;
